@@ -1,0 +1,296 @@
+/* 
+Script Name: boidz
+Author: 100cells 
+
+script will be sourced when boidz.mll is loaded
+*/
+
+// proc will create new boidsBrain node
+
+global proc string getDefault(string $typ)
+{
+	string $attrName;
+	
+	if($typ=="nParticle"){
+		$attrName = "boidDefaultSystem";
+	} else if ($typ=="cacheFile"){
+		$attrName = "boidDefaultCache";
+	}
+	
+	string $nodes[] = `ls -typ $typ`;
+	string $n;
+	string $default = "";
+	int $v;
+	
+	for($n in $nodes){
+		if (`attributeExists $attrName $n`){
+			$v = `getAttr ($n + "." + $attrName)`;
+			if ($v) $default = $n;
+		}
+	}
+	if($default==""){
+		$default = $n;
+		print ("no default " + $typ + "node was found\nusing " + $default + "as default\n");
+	}
+	return $default;
+}
+
+global proc string boidsBrain()
+{
+    string $nodeName = `createNode boidsBrain`;
+	string $pts = getDefault("nParticle");
+	print ("default: " + $pts + "\n");
+	connectAttr ($pts + ".message") ($nodeName + ".particleSystem");
+	return $nodeName;
+    // $nodeName = `rename $nodeName "bbCD#"`;
+}
+
+// proc will create a basic boid system, both with boidsBrain and nParticles
+global proc boidsSys(string $ptName)
+{
+	//string $cPath = "C:\\test\\boids\\";
+	//string $cName = "BdirectCacheSimulationFile";
+	
+	string $ptShape = $ptName + "Shape#";
+	string $ptNucleus = $ptName + "Nucleus#";
+	string $ptCache = $ptName + "Cache#";
+	string $timeOut = "time1.outTime";
+
+	string $pts = `createNode "nParticle" -n $ptShape`;
+	addAttr -ln "boidDefaultSystem" -at bool -dv 1;
+	scriptJob -attributeChange ($pts + ".boidDefaultSystem") ("updateBoidsDefaults " + $pts);
+	//int $index = `scriptJob -attributeChange ($pts + ".boidDefaultSystem") ("updateBoidsDefaults " + $pts)` ;
+	
+	string $ptn = `createNode "nucleus" -n $ptNucleus`;
+	
+	string $ptc = `createNode "cacheFile" -n $ptCache`;
+	addAttr -ln "boidDefaultCache" -at bool -dv 1;
+	scriptJob -attributeChange ($ptc + ".boidDefaultCache") ("updateBoidsDefaults " + $ptc);
+	
+	setAttr ($pts + ".conserve") 0;
+	connectAttr ($pts + ".currentState") ($ptn + ".inputActive[0]");
+	connectAttr ($pts + ".startState") ($ptn + ".inputActiveStart[0]");
+
+	connectAttr ($ptn + ".outputObjects[0]") ($pts + ".nextState");
+	connectAttr ($ptn + ".startFrame") ($pts + ".startFrame");
+
+	setAttr ($ptc + ".enable") 0;
+	//setAttr -typ "string" ($ptc + ".cachePath") $cPath;
+	//setAttr -typ "string" ($ptc + ".cacheName") $cName;
+	connectAttr ($ptc + ".outCacheData[0]") ($pts + ".positions");
+	connectAttr ($ptc + ".outCacheArrayData") ($pts + ".cacheArrayData");
+	connectAttr ($ptc + ".inRange") ($pts + ".playFromCache");
+
+	connectAttr $timeOut ($pts + ".currentTime");
+	connectAttr $timeOut ($ptn + ".currentTime");
+	connectAttr $timeOut ($ptc + ".time");
+	
+	string $bb = boidsBrain();
+	
+	updateBoidsDefaults $pts;
+	updateBoidsDefaults $ptc;
+}
+
+global proc updateBoidsDefaults( string $node )
+{
+	string $attrName;
+	string $typ = `nodeType $node`;
+	
+	if($typ=="nParticle"){
+		$attrName = "boidDefaultSystem";
+	} else if ($typ=="cacheFile"){
+		$attrName = "boidDefaultCache";
+	}
+	int $default = `getAttr ($node + "." + $attrName)`;
+	
+	string $nodes[] = `ls -typ $typ`;
+	string $n;
+	
+	for($n in $nodes){
+		if ((`attributeExists $attrName $n`) && ($n!=$node) && ($default)){
+			setAttr ($n + "." + $attrName) 0;
+		}
+	}
+	
+	print ($node + "triggered \n");
+	print ("Type: " + $typ + " - Value: " + $default + " \n");
+}
+
+global proc updateBoidCache( string $nodeName, string $ptcName)
+{
+	print ("update cache; ptc name: " + $ptcName + "\n");
+	int $len = `getAttr ($nodeName + ".simulationLength")`;
+	int $fps = `getAttr ($nodeName + ".framesPerSecond")`;
+	int $stf = `getAttr ($nodeName + ".startFrame")`;
+	int $cEnd = $len * $fps;
+	string $cFilePath = `getAttr ($nodeName + ".logFilePath")`;
+	string $cFileName = `getAttr ($nodeName + ".logFileName")`;
+	string $mcPath = $cFilePath + $cFileName + ".mc";
+	string $xmlPath = $cFilePath + $cFileName + ".xml";
+	if ((`filetest -f $mcPath`) && (`filetest -f $xmlPath`)){
+		string $cName = `connectionInfo -sfd ($ptcName + ".playFromCache")`;
+		string $cNameToken[];
+		tokenize $cName "." $cNameToken;
+		$cName = $cNameToken[0];
+		
+		setAttr -typ "string" ($cName + ".cachePath") $cFilePath;
+		setAttr -typ "string" ($cName + ".cacheName") $cFileName;
+		setAttr ($cName + ".sourceStart") $stf;
+		setAttr ($cName + ".originalStart") $stf;
+		setAttr ($cName + ".sourceEnd") $cEnd;
+		setAttr ($cName + ".originalEnd") $cEnd;
+		setAttr ($cName + ".enable") 1;
+
+		playbackOptions -e -aet $cEnd -max $cEnd;
+	} else {
+		print "cache node was not updated, since cache files couldn't be found\n";
+	}
+}
+
+
+// proc will launch boids simulation
+global proc launchSimCmd( string $nodeName )
+{
+	print ($nodeName + " to be simulated\n");
+	select -r $nodeName;
+	print ($nodeName + " selected; launching sim\n");
+	
+	// string $nodeName = "boidsBrainShape1";
+	string $confirm = "Yes";
+	string $ptSys = `connectionInfo -sfd ($nodeName + ".particleSystem")`;
+	$ptSys = `substitute ".message" $ptSys ""`;
+	string $logPath = `getAttr ($nodeName + ".logFilePath")`;
+	$logPath += ("/" + `getAttr ($nodeName + ".logFileName")`);
+	string $mcPath = $logPath + ".mc";
+	string $xmlPath = $logPath + ".xml";
+	if ((`filetest -f $mcPath`) || (`filetest -f $xmlPath`)) {
+		print "inside filecheck/n";
+		if ((`filetest -w $mcPath`) && (`filetest -w $xmlPath`)) {
+			print "writable\n";
+			string $mess = "A file with that name already exists. If you proceed, it will be overwritten.\nOccasionally, that may cause Maya to crash or freeze (this will be fixed).\nDo you want to overwrite it?";
+			$confirm = `confirmDialog -t "Overwrite Alert" -m $mess -ma "center" -b "Yes" -b "No" -db "No" -cb "No" -ds "The simulation was aborted" -icn "warning"`;
+		} else {
+			print "not writable\n";
+			string $mess = "A cache file with that name already exists and can't be overwritten, as it is read-only\nThe simulation will be aborted.";
+			$confirm = `confirmDialog -t "Overwrite Alert" -b "OK" -db "OK" -m $mess -icn "warning"`;
+		}
+	}
+	if($confirm=="Yes"){
+		simulateBoids;
+		updateBoidCache($nodeName, $ptSys);
+		print "simulation done\n";
+	} else {
+		print "simulation aborted\n";
+	}
+}
+
+// submenus  construction
+global proc createBoidsSelSubmenu( string $parentMenu )
+{
+	menu -edit -deleteAllItems $parentMenu;
+	
+	string $boidsElement;
+	string $boidsElements[];
+	string $default;
+	int $counter = 0, $populated = 0;
+	
+	$boidsElements = `ls -type boidsBrain`;
+	for( $boidsElement in $boidsElements ){
+		// print ("current: " + $boidsElement + "\n");
+		if ($counter==0) menuItem -l "boid brains" -parent $parentMenu -en false;
+		menuItem -l $boidsElement -parent $parentMenu -c ("select " + $boidsElement);
+		$counter++;
+		$populated = 1;
+	}
+	$counter = 0;
+	$boidsElements = `ls -type nParticle`;
+	for( $boidsElement in $boidsElements ){
+		if (`attributeExists "boidDefaultSystem" $boidsElement`) {
+			if ($counter==0){
+				menuItem -parent $parentMenu -divider true;
+				menuItem -l "boid nParticles" -parent $parentMenu -en false;
+			}
+			$default = "";
+			if (`getAttr ($boidsElement + ".boidDefaultSystem")`) $default = " (default)";
+			menuItem -l ($boidsElement + $default) -parent $parentMenu -c ("select " + $boidsElement);
+			$counter++;
+			$populated = 1;
+		}
+	}
+	$counter = 0;
+	$boidsElements = `ls -type cacheFile`;
+	for( $boidsElement in $boidsElements ){
+		if (`attributeExists "boidDefaultCache" $boidsElement`) {
+			if ($counter==0){
+				menuItem -parent $parentMenu -divider true;
+				menuItem -l "boid nCaches" -parent $parentMenu -en false;
+			}
+			$default = "";
+			if (`getAttr ($boidsElement + ".boidDefaultCache")`) $default = " (default)";
+			menuItem -l ($boidsElement + $default) -parent $parentMenu -c ("select " + $boidsElement);
+			$counter++;
+			$populated = 1;
+		}
+	}
+	
+	if(!$populated) menuItem -l "no boid nodes found" -parent $parentMenu -en 0;
+	/*
+	int $bool = 0;
+	if (`objExists "bbShape1"`) {
+		$bool = 1;
+	}
+	menuItem -l "bb nCache" -parent $parentMenu -c "select bbCache1" -en $bool -ob 1 ;
+	*/
+}
+
+global proc createSimCmdSubmenu( string $parentMenu )
+{
+	menu -edit -deleteAllItems $parentMenu;
+	
+	int $populated = 0;
+	
+	string $boidsBrain;
+	string $boidsBrains[];
+	$boidsBrains = `ls -type boidsBrain`;
+	
+	// menuItem -l "custom simulation" -parent $parentMenu -en false /* -c "boidsSim" -ob 1 */ ;
+	// menuItem -parent $parentMenu -divider true;
+	for( $boidsBrain in $boidsBrains ){
+		print ("current: " + $boidsBrain + "\n");
+		menuItem -l $boidsBrain -parent $parentMenu -c ("launchSimCmd " + $boidsBrain);
+	}
+	
+	if(!$populated) menuItem -l "no boid brains found" -parent $parentMenu -en 0;
+}
+
+// main menu construction
+global proc boidsCreateUI()
+{
+	// check, if menu already exists
+	if(!(`exists boidsMenu`))
+	{
+		
+		// build menu
+		menu -l "Boids" -to true -p "MayaWindow" boidsMenu;
+		menuItem -l "Create Boids System" -c "boidsSys bb";
+		menuItem -l "Create Boids Brain" -c "boidsBrain";
+		menuItem -divider true;
+		
+		menuItem 	-l "Select Boids Nodes"
+					-subMenu true
+					-postMenuCommand "createBoidsSelSubmenu boidsSelMenu"
+					boidsSelMenu;
+			setParent -menu ..;
+		menuItem 	-l "Launch Simulation"
+					-subMenu true
+					-postMenuCommand "createSimCmdSubmenu boidsSimCmdMenu"
+					boidsSimCmdMenu;
+			setParent -menu ..;
+		
+		menuItem -divider true;
+		menuItem -l "Help..." -enable false;
+		menuItem -l "About..." -enable false;
+		setParent ..;
+	}
+}
+ 

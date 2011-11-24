@@ -1,0 +1,147 @@
+///	param	$nodeName	-	the name of the node instance to display.
+
+global proc string[] getRuleAttributes(string $typ){
+	if($typ=="rule"){
+		string $rules[4] = { "alignment", "cohesion", "separation", "follow" };
+		return $rules;
+	} else if($typ=="attr"){
+		string $ruleAttributes[7] = { "Active", "Priority", "Factor", "Weight", "Radius", "Visibility", "AngleOfView" };
+		return $ruleAttributes;
+	}
+}
+
+global proc makeSimCmdButton( string $nodeName )
+{
+	string $nodeName = substring($nodeName,1,size($nodeName)-1);
+	// print "create\n";
+	// print( "node: " + $nodeName + "\n");
+	
+	columnLayout -cat "both" 20 -adj true; // -adjustableColumn true;
+		button -label "Launch Simulation" -h 32 -command ("launchSimCmd " + $nodeName) simLauncher;
+	setParent ..;
+	
+}
+global proc updateSimCmdButton( string $nodeName )
+{
+	string $nodeName = substring($nodeName,1,size($nodeName)-1);
+	// print "update\n";
+	// print( "node: " + $nodeName +"\n");
+	
+    button -e -c ("launchSimCmd " + $nodeName) simLauncher; 
+}
+
+global proc int bbBrowseDir(string $path, string $fileType)
+{
+	textField -e -tx $path logFilePathField;
+	return 1;
+}
+global proc makePathBrowser( string $attrName )
+{
+	print ("make called\n");
+	string $wsData = `workspace -q -fn`;
+	$wsData += ( "/" + `workspace -q -fn -fre "diskCache"`);
+	rowLayout -nc 3;
+		text -l "Log File Path";
+		textField -tx $wsData logFilePathField;
+		symbolButton -image "navButtonBrowse.xpm" browser;
+	// print ( "workspace: " + $defaultWork + "/" + $defaultCache  + "\n");
+	// print ( "make, value assigned: " + `textField -q -tx logFilePathField`  + "\n");
+	setAttr -type "string" $attrName $wsData;
+    updatePathBrowser( $attrName );
+}
+global proc updatePathBrowser( string $attrName )
+{
+	print ("0: " + $attrName + "\n");
+	string $attrValue = `textField -q -tx logFilePathField`;
+	print ("1: " + $attrValue + "\n");
+	if($attrValue==""){
+		$attrValue = `getAttr $attrName`;
+		print ("2: " + $attrValue + "\n");
+		if($attrValue==""){
+			$attrValue = `workspace -q -fn`;
+			$attrValue += ( "/" + `workspace -q -fn -fre "diskCache"`);
+			print ("3: " + $attrValue + "\n");
+		}
+	}
+	setAttr -type "string" $attrName $attrValue;
+	
+	textField -e -tx `getAttr $attrName` logFilePathField;
+	textField -e -cc ("setAttr -type \"string\" " + $attrName + " `textField -q -tx logFilePathField`;") logFilePathField;
+	symbolButton -e -c ("string $logPathField = `textField -q -tx logFilePathField`;workspace -dir $logPathField;fileBrowser( \"bbBrowseDir\", \"Select Log Directory\", \"\", 4 ); setAttr -type \"string\" " + $attrName + " `textField -q -tx logFilePathField`;") browser;
+	
+	// scriptJob -attributeChange $attrName ("textField -e -tx `getAttr " + $attrName + "` logFilePathField");
+}
+
+global proc dimAttributes( string $ruleAttr, string $rule, string $nodeName )
+{
+	if(($ruleAttr=="Active") || ($ruleAttr=="Visibility")){
+		// print ( $nodeName + " - " + $ruleAttr + "\n");
+		int $active = `getAttr ($nodeName + "." + $rule + "Active")`;
+		int $visibility = `getAttr ($nodeName + "." + $rule + "Visibility")`;
+		if($ruleAttr=="Active"){
+			string $ruleAttributes[] = getRuleAttributes("attr");
+			string $rAttr;
+			for ($rAttr in $ruleAttributes){
+				if($rAttr!="Active") editorTemplate -dimControl $nodeName ($rule + $rAttr) (1 - $active);
+			}
+		}
+		editorTemplate -dimControl $nodeName ( $rule + "AngleOfView" ) (1 - ($active && $visibility));
+	}
+}
+
+global proc AEboidsBrainTemplate( string $nodeName )
+{
+
+	string $rules[] = getRuleAttributes("rule");
+	string $ruleAttributes[] = getRuleAttributes("attr");
+	string $rule;
+	string $ruleAttr;
+	
+	// the following controls will be in a scrollable layout
+	editorTemplate -beginScrollLayout;
+
+		// add a bunch of common properties
+		editorTemplate -beginLayout "Simulation General Options" -collapse 0;
+			editorTemplate -addControl "simulationLength";
+			editorTemplate -addControl "framesPerSecond";
+			editorTemplate -addControl "startFrame";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "boidsNumber";
+			editorTemplate -addControl "particleSystem";
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout "Boids Desires Options" -collapse 0;
+			for ($rule in $rules){
+				editorTemplate -beginLayout (capitalizeString($rule) + " Options") -collapse 1;
+				for ($ruleAttr in $ruleAttributes){
+					editorTemplate -l $ruleAttr -addControl ($rule + $ruleAttr) ("dimAttributes " + $ruleAttr + " " + $rule );
+					if($ruleAttr=="Weight") editorTemplate -addSeparator;
+				}
+				editorTemplate -endLayout;
+			}
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout "Boids Locomotion Options" -collapse 0;
+			editorTemplate -addControl "locomotionMode";
+			editorTemplate -addControl "maxSpeed";
+			editorTemplate -addControl "maxForce";
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout "Export Options" -collapse 0;
+			editorTemplate -callCustom "makePathBrowser" "updatePathBrowser" "logFilePath"; //$nodeName;
+			editorTemplate -addControl "logFileName";
+			editorTemplate -addControl "logFileType";
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout "Simulation" -collapse 0;
+			editorTemplate -callCustom "makeSimCmdButton" "updateSimCmdButton" ""; //$nodeName;
+		editorTemplate -endLayout;
+		
+		// include/call base class/node attributes
+		// AEdependNodeTemplate $nodeName;
+		
+		// add any extra attributes that have been added
+		editorTemplate -addExtraControls;
+
+	editorTemplate -endScrollLayout;
+}

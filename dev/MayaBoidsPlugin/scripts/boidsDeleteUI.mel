@@ -1,0 +1,11 @@
+/* 
+
+Script Name: boidz
+Author: 100cells 
+
+*/
+
+global proc boidsDeleteUI()
+{
+	deleteUI boidsMenu;
+}
